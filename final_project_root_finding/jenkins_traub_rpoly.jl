@@ -573,7 +573,8 @@ function newton_raphson(fc, fc_prime, x0, N)
     x = x0
     counter = 0
     x_last = 1000000
-    while (abs(x-x_last)>1e-10)
+    while (evaluate_poly(fc, x)>1e-10)
+    	#(abs(x-x_last)>1e-10)
     	x_last = x
     	counter+=2
         x = x .- evaluate_poly(fc, x)./evaluate_poly(fc_prime, x)
