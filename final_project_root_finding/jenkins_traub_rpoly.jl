@@ -16,6 +16,7 @@ function rpoly_stage1(p_coeffs, num_iters, epsilon)
 	K_polys = k_0 ./ k_0[1]
 	counter = 0
 
+	#Iterate through fixed number of 0-shifts; terminate if root is found
 	for i in 1:num_iters
 		K_polys, x, root_found = next_step(p_coeffs, K_polys, 0, epsilon, false)
 		counter+=1
@@ -29,7 +30,7 @@ end
 function rpoly_stage2(p_coeffs, K_curr, lin_const, num_iters, epsilon)
 	#fixed shift stage 2 
 
-	t_next = t = 1000000000 #TODO: inf in julia?
+	t_next = t = Inf
 	counter = 0
 	
 	#normalize coefficients and operate off of this
@@ -39,6 +40,7 @@ function rpoly_stage2(p_coeffs, K_curr, lin_const, num_iters, epsilon)
 		K_polys = K_curr
 	end
 
+	#Iteratively compute fixed-shifts until a sufficient root approximation is found (or maximum number of iterations exceeded)
 	root_found = false
 	while (true)
 		t, t_prev = t_next, t
@@ -47,6 +49,7 @@ function rpoly_stage2(p_coeffs, K_curr, lin_const, num_iters, epsilon)
 			break
 		end
 
+		#Termination conditions combaring the difference in root approximations
 		counter += 1
 		cond1 = abs(t-t_prev) <= .5*abs(t_prev) #is this a strictly less than or a less than
 		cond2 = abs(t_next-t) <= .5*abs(t)
@@ -63,17 +66,21 @@ end
 
 function rpoly_stage3(p_coeffs, K_curr, lin_const, num_iters, epsilon)
 	#stage 3 variable shifts
+
 	#normalize coefficients and operate off of this
 	if (K_curr[1] != 1)
 		K_curr = K_curr ./ K_curr[1] 
 	end
 
+	#Set initial estimate s_L for the root
 	sl = lin_const - synth_div_eval(p_coeffs, lin_const)[2]/synth_div_eval(K_curr, lin_const)[2]
-	sl_prev = 1000000000 #TODO: inf in julia?
+	sl_prev = Inf
 	counter = 0 
 
 	K_polys = K_curr
 
+	#Iterate until the absolute difference root approximations for 2 iterations is < epsilon
+	#Or also terminate if exceed maximum number of allowed iterations
 	while ((abs(sl - sl_prev) > epsilon) && (counter < num_iters))
 		p_prime, p_eval_at_sl = synth_div_eval(p_coeffs, sl)
 		k_next, k_curr_at_sl = synth_div_eval(K_polys, sl)
@@ -81,7 +88,6 @@ function rpoly_stage3(p_coeffs, K_curr, lin_const, num_iters, epsilon)
 
 		#check if we find a root by seeing if evaluated polynomial is 0
 		if (abs(p_eval_at_sl) < epsilon)
-			#TODO: check if this is p_eval or if it is k_eval
 			return K_polys[length(K_polys)], sl, counter, true
 		end	
 		
@@ -91,12 +97,14 @@ function rpoly_stage3(p_coeffs, K_curr, lin_const, num_iters, epsilon)
 		K_polys = k_next_iter
 	end
 	if (counter > num_iters)
+		#Failed to find a root for this iteration, returning false
 		return 0,0,0,false
 	end
 	return K_polys[length(K_polys)], sl, counter, true
 end
 
 function newton(start, func_coeffs, deriv_coeffs, epsilon, num_iters)
+	#Iterative newton raphson algorithm that terminates when aboslute error difference is < epsilon
 	x_curr = start
 	x_next = x_curr - evaluate_poly(func_coeffs, x_curr)/evaluate_poly(deriv_coeffs, x_curr)
 	counter = 0
@@ -109,7 +117,7 @@ function newton(start, func_coeffs, deriv_coeffs, epsilon, num_iters)
 end
 
 function jenkins_traub_one_iter(p_coeffs, num_iterations, epsilon)
-	#Return the final set of coefficients for a polynomial and the root
+	#Compute the smallest root for the current coefficients list using the 3 stage Jenkins Traub alg
 
 	#Check if the constant coeff is a zero --> implies the root is zero
 	if ((length(p_coeffs) > 0) && (p_coeffs[length(p_coeffs)]==0))
@@ -137,7 +145,7 @@ function jenkins_traub_one_iter(p_coeffs, num_iterations, epsilon)
 
 	#get a guess for initial linear constant s; approximate using standard method of a cauchy polynomial + netwons iter
 	# new polynomial has coeffs that are the moduli of p_coeffs, but the last root is -1.
-	all_pos = [abs(i) for i in p_coeffs] #TODO: need an alement wise absolute value
+	all_pos = [abs(i) for i in p_coeffs] #TODO: need an element wise absolute value
 	all_pos[length(all_pos)] = -all_pos[length(all_pos)]
 
 	#Take the derivative
@@ -148,7 +156,7 @@ function jenkins_traub_one_iter(p_coeffs, num_iterations, epsilon)
 	beta = newton(1.0, all_pos, deriv, .01, 500)
 
 	while (true)
-		phi_rand = 2.0*pi*rand(1)[1] #TODO: random in julia
+		phi_rand = 2.0*pi*rand(1)[1] 
 		sl = cos(phi_rand)*beta
 
 		k_curr, num_iters2, root_found = rpoly_stage2(p_coeffs, k_curr, sl, num_iterations, epsilon)
@@ -169,6 +177,9 @@ function jenkins_traub_one_iter(p_coeffs, num_iterations, epsilon)
 end
 
 function get_all_roots_JT(p_coeffs, epsilon, num_iterations)
+	#Return the total set of coefficients for a polynomial and the root
+
+	#Remove any leading zero coefficients since they are simply extra terms and will mess up normalization
 	while ((length(p_coeffs) > 0) && (p_coeffs[1]==0))
 		p_coeffs = p_coeffs[2:length(p_coeffs)]
 	end
@@ -180,17 +191,24 @@ function get_all_roots_JT(p_coeffs, epsilon, num_iterations)
 
 	roots = []
 	total_function_evals = 0
+	#Iteratively run Jenkins-Traub algorithm
 	for i in 1:length(p_coeffs)-1
 		upd_coeffs, s, num_f_evals = jenkins_traub_one_iter(p_coeffs, num_iterations, epsilon)
+
+		#update the polynomial by dividing out the linear term that factors in the root
 		p_coeffs, eval = synth_div_eval(p_coeffs, s)
+
+		#increase count on number of times the polynomial func is evaluated
 		total_function_evals += num_f_evals+1
+
+		#store the root found for the iteration
 		roots = push!(roots, s)
 	end
 	return roots, total_function_evals
 end
 
-
 function evaluate_poly(p_coeffs, val)
+	#Stand alone polynomial evaluation method (no synthetic division)
 	highest_power = length(p_coeffs)
 	sum = 0
 	for i in 1:highest_power
@@ -201,17 +219,23 @@ function evaluate_poly(p_coeffs, val)
 end
 
 function synth_div_eval(p_coeffs, lin_const)
-	#Assumes x per indexed by 1.0 (leading coeff). Decrease length of list by 1 (since dividing by x+/-c)
-	#To only divide the entire function by 0, then set lin_const = 0
+	#Assumes leading coeff is 1.0 Decrease length of list by 1 (since dividing by x+/-c)
 
+
+	#To only divide the entire function by x, then set lin_const = 0. This involves only truncating the function. Evaluation is merely the constant term
+	if (lin_const == 0)
+		return p_coeffs[1:length(p_coeffs)-1], p_coeffs[length(p_coeffs)]
+	end
+
+	#In all other cases, perform regular synthetic division
 	syn_div = zeros(length(p_coeffs)-1)
 	syn_div[1] = p_coeffs[1]
 	for i=2:length(p_coeffs)-1
 		syn_div[i] = p_coeffs[i] + syn_div[i-1]*lin_const
 	end
 
-	#Evaluate linear portion of polynomial
-    eval = p_coeffs[length(p_coeffs)] + syn_div[length(syn_div)] .* lin_const
+	#Evaluate linear portion of polynomial -- taking advantage of remainder of the poly division
+	eval = p_coeffs[length(p_coeffs)] + syn_div[length(syn_div)] .* lin_const
 
 	return syn_div, eval
 end
@@ -226,18 +250,17 @@ function next_step(p_coeffs, K_current, const_to_eval, epsilon, generate_t)
 
 	#check if we find a root by seeing if evaluated polynomial is 0
 	if (abs(p_eval_at_c) < epsilon)
-		#MAJOR TODO: should we return here
 		root_found = True
 	end
 
+	# If evaluated shifted polynomial is too small, then increase it slightly so not dividing by 0
 	if (abs(k_curr_at_c) < epsilon)
-		#TODO: why do we do this?
 		k_curr_at_c += epsilon/100.0
 	end
 
 	t = 0.0
 	if (generate_t == true)
-		#update where we want to evaluate at
+		#update root approximation for the new shifted polynomial (not needed for all stages)
 		t = const_to_eval - p_eval_at_c/k_curr_at_c
 	end
 
@@ -308,7 +331,7 @@ function der_test(x)
 	k_0 = k_0[1:length(k_0)-1]
 	return evaluate_poly(k_0, x)
 end
-println("STARTING THIS THING RIGHT NOW AHH")
+
 #Newton Raphson will find smallest root, so will inner JT
 Ns = [1,2,3,4,5,6,7,8,9,10]
 guess = 10.0  
@@ -352,11 +375,9 @@ Ns = [1,2,3,4,5,6,7,8,9,10,11,12,13]
 guess = 0#-7
 n_r_roots = [newton_raphson(test_func, der_test, guess, n) for n in Ns]
 j_t_roots = [jenkins_traub_one_iter(big_boi, n, 1e-10)[2] for n in Ns]
-println("STARTING HERE")
 println(n_r_roots)
 println(j_t_roots)
 println(get_all_roots_JT(big_boi, 1e-10, 10))
-println("DOEN HERE")
 exact = -.1489
 
 n_r_err = [rel_err(n_r_roots[i], exact) for i in 1:length(Ns)]
@@ -373,7 +394,6 @@ legend()
 
 title("Error Convergence Rates (Medium Polynomial)")
 savefig("jenkins_error_rates_numone.png")
-print("done")
 
 
 ###### TEST for a large polynomial (big spread of roots) = 26th degree
@@ -395,11 +415,8 @@ Ns = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
 guess = 0
 n_r_roots = [newton_raphson(test_func, der_test, guess, n) for n in Ns]
 j_t_roots = [jenkins_traub_one_iter(biggg_coeffs, n, 1e-10)[2] for n in Ns]
-println("STARTING HERE")
-println(n_r_roots)
-println(j_t_roots)
-println(get_all_roots_JT(biggg_coeffs, 1e-10, 10))
-println("DOEN HERE")
+
+#Double exact values because Jenkins Traub will converge to either of these depending on the random initial shift values in stage 2
 exact = .1
 exact2 = -.15
 
@@ -425,7 +442,6 @@ legend()
 
 title("Error Convergence Rates (Large Polynomial)")
 savefig("jenkins_error_rates_numtwo.png")
-print("done")
 
 function newton_raphson(fc, fc_prime, x0, N)
     x = x0
@@ -463,6 +479,7 @@ print("done")
 
 
 function iterative_newton_raphson(c, N)
+	#Newton Raphson for polynomials of all degrees
 	powers = [length(c)-i for i in 1:length(c)]
 	cprime =  powers .* c
 	cprime = cprime[1:length(cprime)-1]
@@ -497,17 +514,17 @@ function take_deriv(c)
 	cprime = cprime[1:length(cprime)-1]
 	return cprime
 end
-function generate_shit(biggg_coeffs)
-	println("hello")
+function generate_all_degree_polys(biggg_coeffs)
+	#Generate polynomials with real valued coefficients by iteratively taking the derivative and storing that as a standalone polynomial 
+	#Creates N-2 (where N=degree of initial coefficients list) total polynomials
 	many_poly = [biggg_coeffs]
-	println("bye", length(many_poly), many_poly)
 	for i in 1:length(many_poly[1])-2
 		c = take_deriv(many_poly[length(many_poly)])
 		many_poly = push!(many_poly, c)
 	end
 	return many_poly
 end
-many_poly = generate_shit(biggg_coeffs)
+many_poly = generate_all_degree_polys(biggg_coeffs)
 
 solve_times = []
 poly_length = []
@@ -548,27 +565,8 @@ savefig("solve_times.png")
 print("done")
 
 
-#TODO: number of iterations to converge on each root with x amount of error in
 c = [280.8, 3467.81, 781.739, -128636.0, -347272.0, 1.1595e6, 4.64429e6, -2.54983e6, -2.20585e7, -9.42948e6, 3.89638e7, 4.0433e7, -9.45315e6, -2.83132e7, -1.175e7, -1.17e6]
 
-function iterative_newton_raphson(c, N)
-	powers = [length(c)-i for i in 1:length(c)]
-	cprime =  powers .* c
-	cprime = cprime[1:length(cprime)-1]
-	roots = []
-	for i in 1:length(c)-1
-		r = newton_raphson(c, cprime, 0.0, N)
-		push!(roots, r)
-		c = synth_div_eval(c, r)[1]
-		powers = [length(c)-i for i in 1:length(c)]
-		cprime =  powers .* c
-		cprime = cprime[1:length(cprime)-1]
-	end
-	return roots
-end
-
-
-ordered_roots = iterative_newton_raphson(c, 1000)
 
 #COUNTING FUNCTION EVALS
 function newton_raphson(fc, fc_prime, x0, N)
@@ -587,7 +585,7 @@ function newton_raphson(fc, fc_prime, x0, N)
     return x, counter
 end
 
-function iterative_newton_raphson(c, N)
+function iterative_newton_raphson_count_evals(c, N)
 	powers = [length(c)-i for i in 1:length(c)]
 	cprime =  powers .* c
 	cprime = cprime[1:length(cprime)-1]
@@ -606,7 +604,7 @@ function iterative_newton_raphson(c, N)
 	return roots, counter
 end
 
-many_poly = generate_shit(biggg_coeffs)
+many_poly = generate_all_degree_polys(biggg_coeffs)
 
 function count_evals(many_poly)
 	JT_evals = []
@@ -615,7 +613,7 @@ function count_evals(many_poly)
 	for i in 1:length(many_poly)
 		jt_e = get_all_roots_JT(many_poly[length(many_poly)-i+1], 1e-10, 10)[2]
 		JT_evals = push!(JT_evals, jt_e)
-		nr_e = iterative_newton_raphson(many_poly[length(many_poly)-i+1], 100)[2]
+		nr_e = iterative_newton_raphson_count_evals(many_poly[length(many_poly)-i+1], 100)[2]
 		NR_evals = push!(NR_evals, nr_e)
 		poly_length = push!(poly_length, length(many_poly[length(many_poly)-i+1]))
 	end
